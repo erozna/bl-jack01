@@ -24,10 +24,14 @@ def 전략_가이드(내_카드, 딜러_카드):
     딜러_값_문자 = 딜러_카드[:-1]
     딜러_값 = 11 if 딜러_값_문자 == 'A' else (10 if 딜러_값_문자 in ['J', 'Q', 'K', '10'] else int(딜러_값_문자))
     
-    if len(내_카드) == 2 and 내_카드[0][:-1] == 내_카드[1][:-1]:
-        값 = 내_카드[0][:-1]
-        if 값 in ['A', '8']: return "찢기 (P)"
-        if 값 in ['2', '3', '7'] and 딜러_값 <= 7: return "찢기 (P)"
+    # 찢기(Split) 전략 - 점수가 같으면 추천
+    if len(내_카드) == 2:
+        카드1_점수 = 10 if 내_카드[0][:-1] in ['10', 'J', 'Q', 'K'] else (11 if 내_카드[0][:-1] == 'A' else int(내_카드[0][:-1]))
+        카드2_점수 = 10 if 내_카드[1][:-1] in ['10', 'J', 'Q', 'K'] else (11 if 내_카드[1][:-1] == 'A' else int(내_카드[1][:-1]))
+        if 카드1_점수 == 카드2_점수:
+            값 = 내_카드[0][:-1]
+            if 값 in ['A', '8']: return "찢기 (P)"
+            if 값 in ['2', '3', '7'] and 딜러_값 <= 7: return "찢기 (P)"
     
     if 내_점수 >= 17: return "멈춤 (S)"
     if 13 <= 내_점수 <= 16: return "멈춤 (S)" if 딜러_값 <= 6 else "받기 (H)"
@@ -57,7 +61,7 @@ if 'balance' not in st.session_state:
         'wins': 0, 'losses': 0, 'draws': 0,
         'p_hands': [], 'd_hand': [], 'current_hand_idx': 0, 'history': [],
         'game_status': 'betting', 'msg': "배팅 후 게임을 시작하세요.", 'auto_mode': False,
-        'processed': False # 중복 처리 방지 플래그
+        'processed': False
     })
 
 def 덱_초기화():
@@ -78,7 +82,7 @@ def 카드_뽑기():
 st.set_page_config(page_title="BK-블랙잭", layout="wide")
 st.title("🃏 BK-블랙잭")
 
-# 전적 계산
+# 전적 상단 표시
 판수 = st.session_state.wins + st.session_state.draws + st.session_state.losses
 승률 = (st.session_state.wins / 판수 * 100) if 판수 > 0 else 0
 st.markdown(f"### 📊 현재 전적: {판수}전 {st.session_state.wins}승 {st.session_state.draws}무 {st.session_state.losses}패 | 승률: {승률:.1f}%")
@@ -112,18 +116,17 @@ with col1:
     st.markdown(딜러_카드_출력, unsafe_allow_html=True)
     st.divider()
 
-    for idx, 핸디 in enumerate(st.session_state.p_hands):
+    for idx, 핸디이름 in enumerate(st.session_state.p_hands):
         활성화 = (idx == st.session_state.current_hand_idx and st.session_state.game_status == 'playing')
         st.markdown(f"<div style='border: {'2px solid yellow' if 활성화 else 'none'}; padding:10px; border-radius:10px;'>", unsafe_allow_html=True)
-        st.subheader(f"핸디 {idx+1} (점수: {점수_계산(핸디)})")
-        st.markdown("".join([카드_렌더링(c) for c in 핸디]), unsafe_allow_html=True)
+        st.subheader(f"핸디 {idx+1} (점수: {점수_계산(핸디이름)})")
+        st.markdown("".join([카드_렌더링(c) for c in 핸디이름]), unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
 with col2:
     st.subheader("조작판")
     st.info(st.session_state.msg)
     
-    # 1. 배팅 단계
     if st.session_state.game_status == 'betting':
         st.session_state.bet = st.slider("배팅액 설정", 10000, 300000, 10000, step=5000)
         if st.button("게임 시작", use_container_width=True) or st.session_state.auto_mode:
@@ -141,7 +144,6 @@ with col2:
                     st.session_state.msg = "동작을 선택하세요."
                 st.rerun()
 
-    # 2. 플레이 단계
     elif st.session_state.game_status == 'playing':
         현재_핸디 = st.session_state.p_hands[st.session_state.current_hand_idx]
         가이드 = 전략_가이드(현재_핸디, st.session_state.d_hand[0])
@@ -168,13 +170,17 @@ with col2:
                 st.session_state.current_hand_idx += 1
             else: st.session_state.game_status = 'dealer_turn'
             st.rerun()
-        찢기가능 = len(현재_핸디) == 2 and 현재_핸디[0][:-1] == 현재_핸디[1][:-1] and len(st.session_state.p_hands) == 1
+            
+        # 찢기(Split) 로직 수정: 모양이 달라도 점수가 10점으로 같으면 허용
+        카드1_점수 = 점수_계산([현재_핸디[0]])
+        카드2_점수 = 점수_계산([현재_핸디[1]])
+        찢기가능 = len(현재_핸디) == 2 and 카드1_점수 == 카드2_점수 and len(st.session_state.p_hands) == 1
+        
         if c4.button("찢기(P)", disabled=not 찢기가능) or (st.session_state.auto_mode and "찢기" in 가이드 and 찢기가능):
             st.session_state.balance -= st.session_state.bet
             st.session_state.p_hands = [[현재_핸디[0], 카드_뽑기()], [현재_핸디[1], 카드_뽑기()]]
             st.rerun()
 
-    # 3. 딜러 턴 및 결과 정산
     elif st.session_state.game_status == 'dealer_turn':
         while 점수_계산(st.session_state.d_hand) < 17:
             st.session_state.d_hand.append(카드_뽑기())
@@ -184,12 +190,7 @@ with col2:
     elif st.session_state.game_status == 'result':
         if not st.session_state.processed:
             딜_점, 딜_블 = 점수_계산(st.session_state.d_hand), 블랙잭_확인(st.session_state.d_hand)
-            # 인슈어런스 정산
-            if 딜_블 and st.session_state.ins_bet > 0:
-                st.session_state.balance += st.session_state.ins_bet * 3
-            
-            지급액_합계 = 0
-            승_수, 패_수, 무_수 = 0, 0, 0
+            지급액_합계, 승_수, 패_수, 무_수 = 0, 0, 0, 0
             결과_리스트 = []
 
             for 핸디 in st.session_state.p_hands:
@@ -204,7 +205,6 @@ with col2:
                 지급액_합계 += 지급
                 결과_리스트.append(결과)
             
-            # 최종 전적 업데이트 (한 판 단위)
             if 승_수 > 패_수: st.session_state.wins += 1
             elif 패_수 > 승_수: st.session_state.losses += 1
             else: st.session_state.draws += 1
@@ -212,7 +212,7 @@ with col2:
             st.session_state.balance += 지급액_합계
             st.session_state.history.append({"결과": ", ".join(결과_리스트), "잔액": f"{st.session_state.balance:,}"})
             st.session_state.msg = " | ".join(결과_리스트)
-            st.session_state.processed = True # 처리 완료 플래그 설정
+            st.session_state.processed = True
             st.rerun()
         
         if st.button("다음 게임") or st.session_state.auto_mode:
