@@ -2,12 +2,13 @@ import streamlit as st
 import random
 import time
 
-# --- 1. 베이직 전략 및 점수 로직 ---
+# --- 1. 로직 함수 ---
 def get_score(hand):
+    if not hand: return 0
     score = 0
     aces = 0
     for card in hand:
-        val = card[:-1] # 카드에서 모양 제외한 값
+        val = card[:-1]
         if val == 'A': aces += 1; score += 11
         elif val in ['J', 'Q', 'K', '10']: score += 10
         else: score += int(val)
@@ -19,39 +20,38 @@ def get_basic_strategy(p_hand, d_upcard):
     d_val_raw = d_upcard[:-1]
     d_val = 11 if d_val_raw == 'A' else (10 if d_val_raw in ['J', 'Q', 'K', '10'] else int(d_val_raw))
     
+    # Pair Splitting (간소화)
+    if len(p_hand) == 2 and p_hand[0][:-1] == p_hand[1][:-1]:
+        if p_hand[0][:-1] in ['A', '8']: return "Split (P)"
+    
     if p_score >= 17: return "Stand (S)"
     if 13 <= p_score <= 16: return "Stand (S)" if d_val <= 6 else "Hit (H)"
-    if p_score == 12: return "Stand (S)" if d_val in [4, 5, 6] else "Hit (H)"
     if p_score == 11: return "Double (D)"
-    if p_score == 10: return "Double (D)" if d_val <= 9 else "Hit (H)"
-    if p_score == 9: return "Double (D)" if d_val in [3, 4, 5, 6] else "Hit (H)"
     return "Hit (H)"
 
-# --- 2. 카드 그래픽 디자인 (CSS 강화) ---
+# --- 2. 카드 그래픽 (CSS) ---
 def card_html(card_str):
     if card_str == "?":
-        return f"""<div style="display:inline-block; width:65px; height:95px; background:linear-gradient(135deg, #1a1a1a 25%, #444 100%); 
-        color:white; border-radius:8px; margin:5px; text-align:center; line-height:95px; font-weight:bold; border:2px solid #555; box-shadow: 2px 2px 5px rgba(0,0,0,0.5);">?</div>"""
-    
+        return f"""<div style="display:inline-block; width:60px; height:85px; background:linear-gradient(135deg, #1a1a1a 25%, #444 100%); 
+        color:white; border-radius:8px; margin:3px; text-align:center; line-height:85px; font-weight:bold; border:2px solid #555; box-shadow: 2px 2px 5px rgba(0,0,0,0.5);">?</div>"""
     suit = card_str[-1]
     val = card_str[:-1]
     color = "#ff4b4b" if suit in ['♥', '♦'] else "#31333F"
-    
     return f"""
-    <div style="display:inline-block; width:65px; height:95px; background:white; color:{color}; 
-    border-radius:8px; margin:5px; padding:5px; position:relative; border:1px solid #ccc; 
+    <div style="display:inline-block; width:60px; height:85px; background:white; color:{color}; 
+    border-radius:8px; margin:3px; padding:5px; position:relative; border:1px solid #ccc; 
     box-shadow: 3px 3px 8px rgba(0,0,0,0.2); font-family: 'Arial';">
-        <div style="position:absolute; top:5px; left:5px; font-size:16px; font-weight:bold; line-height:1;">{val}<br><span style="font-size:12px;">{suit}</span></div>
-        <div style="text-align:center; line-height:95px; font-size:24px;">{suit}</div>
-        <div style="position:absolute; bottom:5px; right:5px; font-size:16px; font-weight:bold; transform: rotate(180deg); line-height:1;">{val}<br><span style="font-size:12px;">{suit}</span></div>
+        <div style="position:absolute; top:2px; left:5px; font-size:14px; font-weight:bold;">{val}</div>
+        <div style="text-align:center; line-height:85px; font-size:20px;">{suit}</div>
     </div>
     """
 
-# --- 3. 세션 상태 관리 ---
+# --- 3. 세션 상태 초기화 ---
 if 'balance' not in st.session_state:
     st.session_state.update({
         'balance': 2000000, 'bet': 10000, 'deck': [], 'rc': 0, 'hand_count': 0,
-        'p_hand': [], 'd_hand': [], 'game_status': 'betting', 'msg': "배팅 후 게임을 시작하세요."
+        'p_hands': [], 'd_hand': [], 'current_hand_idx': 0,
+        'game_status': 'betting', 'msg': "배팅 후 DEAL을 누르세요."
     })
 
 def reset_deck():
@@ -64,128 +64,122 @@ def reset_deck():
 def draw_card():
     if len(st.session_state.deck) < 20: reset_deck()
     card = st.session_state.deck.pop()
-    val = card[:-1]
-    if val in ['10', 'J', 'Q', 'K', 'A']: st.session_state.rc -= 1
-    elif val in ['2', '3', '4', '5', '6']: st.session_state.rc += 1
+    v = card[:-1]
+    if v in ['10', 'J', 'Q', 'K', 'A']: st.session_state.rc -= 1
+    elif v in ['2', '3', '4', '5', '6']: st.session_state.rc += 1
     return card
 
 # --- 4. 메인 UI ---
-st.set_page_config(page_title="Advanced Blackjack", layout="wide")
-st.markdown("<style>.metric-box { background: #262730; padding: 15px; border-radius: 10px; }</style>", unsafe_allow_html=True)
+st.set_page_config(page_title="Split Enabled Blackjack", layout="wide")
+st.title("🃏 블랙잭 프로 (스플릿 기능 포함)")
 
-st.title("🃏 프로페셔널 블랙잭 시뮬레이터")
-
-# 사이드바: 통계 및 덱 제어
 with st.sidebar:
-    st.header("📊 통계 및 설정")
+    st.header("📊 통계")
     st.metric("현재 자산", f"{st.session_state.balance:,}원")
-    st.write(f"🎮 게임 횟수: **{st.session_state.hand_count}회**")
-    st.write(f"🎴 남은 카드: **{len(st.session_state.deck)}장**")
-    
-    st.divider()
-    if st.button("🔄 카드만 새로 섞기 (자산 유지)", use_container_width=True):
-        reset_deck()
-        st.success("덱이 초기화되었습니다.")
-    
-    if st.button("💸 자산 초기화 (200만)", use_container_width=True):
-        st.session_state.balance = 2000000
-        st.session_state.hand_count = 0
-        reset_deck()
-        st.rerun()
+    st.write(f"🎮 게임: {st.session_state.hand_count}회 | 🎴 남은 카드: {len(st.session_state.deck)}장")
+    if st.button("🔄 덱만 새로 섞기"): reset_deck(); st.rerun()
+    auto_mode = st.checkbox("🤖 자동 플레이 (베이직 전략)")
 
-    st.divider()
-    rem_decks = max(1, len(st.session_state.deck) / 52)
-    st.metric("True Count", f"{st.session_state.rc / rem_decks:.2f}")
-    auto_mode = st.checkbox("🤖 베이직 전략 자동 플레이")
-
-# 메인 게임 레이아웃
 if not st.session_state.deck: reset_deck()
 
 col1, col2 = st.columns([2, 1])
 
 with col1:
     # 딜러 영역
-    d_score = get_score(st.session_state.d_hand) if st.session_state.game_status != 'playing' else "?"
-    st.subheader(f"Dealer Hand (Score: {d_score})")
-    d_display = "".join([card_html(c) if i == 0 or st.session_state.game_status != 'playing' else card_html("?") 
+    st.subheader("Dealer Hand")
+    d_display = "".join([card_html(c) if i == 0 or st.session_state.game_status == 'result' else card_html("?") 
                          for i, c in enumerate(st.session_state.d_hand)])
     st.markdown(d_display, unsafe_allow_html=True)
-
     st.divider()
 
-    # 플레이어 영역
-    p_score = get_score(st.session_state.p_hand)
-    st.subheader(f"Player Hand (Score: {p_score})")
-    p_display = "".join([card_html(c) for c in st.session_state.p_hand])
-    st.markdown(p_display, unsafe_allow_html=True)
-    
-    if st.session_state.game_status == 'playing':
-        rec = get_basic_strategy(st.session_state.p_hand, st.session_state.d_hand[0])
-        st.info(f"💡 가이드: {rec}")
+    # 플레이어 영역 (멀티 핸드 대응)
+    for idx, hand in enumerate(st.session_state.p_hands):
+        is_active = (idx == st.session_state.current_hand_idx and st.session_state.game_status == 'playing')
+        bg = "#333" if is_active else "transparent"
+        st.markdown(f"<div style='background:{bg}; padding:10px; border-radius:10px;'>", unsafe_allow_html=True)
+        st.subheader(f"Hand {idx+1} (Score: {get_score(hand)}) {'👈 현재 플레이 중' if is_active else ''}")
+        st.markdown("".join([card_html(c) for c in hand]), unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
 with col2:
     st.subheader("Control")
-    st.write(f"📢 {st.session_state.msg}")
+    st.info(st.session_state.msg)
     
     if st.session_state.game_status == 'betting':
-        st.session_state.bet = st.slider("배팅액 설정", 10000, 300000, 10000, step=10000)
+        st.session_state.bet = st.slider("배팅액", 10000, 300000, 10000, step=10000)
         if st.button("DEAL", use_container_width=True):
             if st.session_state.balance >= st.session_state.bet:
                 st.session_state.balance -= st.session_state.bet
-                st.session_state.p_hand = [draw_card(), draw_card()]
+                st.session_state.p_hands = [[draw_card(), draw_card()]]
                 st.session_state.d_hand = [draw_card(), draw_card()]
+                st.session_state.current_hand_idx = 0
                 st.session_state.game_status = 'playing'
                 st.session_state.hand_count += 1
+                st.session_state.msg = "플레이 핸드를 선택하세요."
                 st.rerun()
-            else: st.error("잔액 부족!")
 
     elif st.session_state.game_status == 'playing':
-        btn_cols = st.columns(3)
-        if btn_cols[0].button("Hit"):
-            st.session_state.p_hand.append(draw_card())
-            if get_score(st.session_state.p_hand) > 21:
-                st.session_state.game_status = 'betting'
-                st.session_state.msg = "Bust! 딜러 승리"
+        curr_hand = st.session_state.p_hands[st.session_state.current_hand_idx]
+        st.write(f"현재 가이드: **{get_basic_strategy(curr_hand, st.session_state.d_hand[0])}**")
+        
+        c1, c2, c3, c4 = st.columns(4)
+        if c1.button("Hit"):
+            curr_hand.append(draw_card())
+            if get_score(curr_hand) >= 21:
+                if st.session_state.current_hand_idx < len(st.session_state.p_hands) - 1:
+                    st.session_state.current_hand_idx += 1
+                else: st.session_state.game_status = 'dealer_turn'
             st.rerun()
-        if btn_cols[1].button("Stand"):
-            st.session_state.game_status = 'dealer_turn'
+        
+        if c2.button("Stand"):
+            if st.session_state.current_hand_idx < len(st.session_state.p_hands) - 1:
+                st.session_state.current_hand_idx += 1
+            else: st.session_state.game_status = 'dealer_turn'
             st.rerun()
-        if btn_cols[2].button("Double"):
+            
+        if c3.button("Double", disabled=len(curr_hand) != 2):
             if st.session_state.balance >= st.session_state.bet:
                 st.session_state.balance -= st.session_state.bet
-                st.session_state.bet *= 2
-                st.session_state.p_hand.append(draw_card())
-                st.session_state.game_status = 'dealer_turn'
+                curr_hand.append(draw_card())
+                if st.session_state.current_hand_idx < len(st.session_state.p_hands) - 1:
+                    st.session_state.current_hand_idx += 1
+                else: st.session_state.game_status = 'dealer_turn'
                 st.rerun()
 
-# 딜러 AI 및 결과 처리
+        # 스플릿 버튼 활성화 조건: 두 카드의 숫자가 같고, 핸드가 1개일 때
+        can_split = len(curr_hand) == 2 and curr_hand[0][:-1] == curr_hand[1][:-1] and len(st.session_state.p_hands) == 1
+        if c4.button("Split", disabled=not can_split):
+            if st.session_state.balance >= st.session_state.bet:
+                st.session_state.balance -= st.session_state.bet
+                hand1 = [curr_hand[0], draw_card()]
+                hand2 = [curr_hand[1], draw_card()]
+                st.session_state.p_hands = [hand1, hand2]
+                st.rerun()
+
+# 결과 처리 로직
 if st.session_state.game_status == 'dealer_turn':
     while get_score(st.session_state.d_hand) < 17:
         st.session_state.d_hand.append(draw_card())
     
-    ps, ds = get_score(st.session_state.p_hand), get_score(st.session_state.d_hand)
-    if ds > 21 or ps > ds:
-        st.session_state.balance += st.session_state.bet * 2
-        st.session_state.msg = f"승리! {st.session_state.bet*2:,}원 획득"
-    elif ps < ds: st.session_state.msg = "딜러 승리"
-    else:
-        st.session_state.balance += st.session_state.bet
-        st.session_state.msg = "무승부 (Push)"
+    st.session_state.game_status = 'result'
+    d_score = get_score(st.session_state.d_hand)
+    final_msg = []
     
-    st.session_state.game_status = 'betting'
+    for i, hand in enumerate(st.session_state.p_hands):
+        p_score = get_score(hand)
+        if p_score > 21: final_msg.append(f"H{i+1}: Bust 패배"); continue
+        if d_score > 21 or p_score > d_score:
+            st.session_state.balance += st.session_state.bet * 2
+            final_msg.append(f"H{i+1}: 승리!")
+        elif p_score < d_score: final_msg.append(f"H{i+1}: 패배")
+        else:
+            st.session_state.balance += st.session_state.bet
+            final_msg.append(f"H{i+1}: 무승부")
+    
+    st.session_state.msg = " | ".join(final_msg)
     st.rerun()
 
-# 자동 플레이 (베이직 전략 기반)
-if auto_mode and st.session_state.game_status == 'playing':
-    time.sleep(0.8)
-    action = get_basic_strategy(st.session_state.p_hand, st.session_state.d_hand[0])
-    if "Hit" in action:
-        st.session_state.p_hand.append(draw_card())
-        if get_score(st.session_state.p_hand) > 21: st.session_state.game_status = 'betting'
-    elif "Double" in action:
-        st.session_state.balance -= st.session_state.bet
-        st.session_state.bet *= 2
-        st.session_state.p_hand.append(draw_card())
-        st.session_state.game_status = 'dealer_turn'
-    else: st.session_state.game_status = 'dealer_turn'
-    st.rerun()
+if st.session_state.game_status == 'result':
+    if st.button("NEXT GAME", use_container_width=True):
+        st.session_state.game_status = 'betting'
+        st.rerun()
