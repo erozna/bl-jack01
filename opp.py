@@ -1,6 +1,7 @@
 import streamlit as st
 import random
 import time
+import pandas as pd
 
 # --- 1. 로직 엔진 ---
 def get_score(hand):
@@ -36,25 +37,26 @@ def get_basic_strategy(p_hand, d_upcard):
 # --- 2. 카드 그래픽 (CSS) ---
 def card_html(card_str):
     if card_str == "?":
-        return f"""<div style="display:inline-block; width:60px; height:85px; background:linear-gradient(135deg, #1a1a1a 25%, #444 100%); 
-        color:white; border-radius:8px; margin:3px; text-align:center; line-height:85px; font-weight:bold; border:2px solid #555;">?</div>"""
+        return f"""<div style="display:inline-block; width:55px; height:80px; background:linear-gradient(135deg, #1a1a1a 25%, #444 100%); 
+        color:white; border-radius:8px; margin:2px; text-align:center; line-height:80px; font-weight:bold; border:2px solid #555;">?</div>"""
     suit, val = card_str[-1], card_str[:-1]
     color = "#ff4b4b" if suit in ['♥', '♦'] else "#31333F"
     return f"""
-    <div style="display:inline-block; width:60px; height:85px; background:white; color:{color}; 
-    border-radius:8px; margin:3px; padding:5px; position:relative; border:1px solid #ccc; 
-    box-shadow: 3px 3px 8px rgba(0,0,0,0.2); font-family: 'Arial';">
-        <div style="position:absolute; top:2px; left:5px; font-size:14px; font-weight:bold; line-height:1.1;">{val}<br><span style="font-size:10px;">{suit}</span></div>
-        <div style="text-align:center; line-height:85px; font-size:20px;">{suit}</div>
+    <div style="display:inline-block; width:55px; height:80px; background:white; color:{color}; 
+    border-radius:8px; margin:2px; padding:3px; position:relative; border:1px solid #ccc; 
+    box-shadow: 2px 2px 5px rgba(0,0,0,0.1); font-family: 'Arial';">
+        <div style="position:absolute; top:2px; left:4px; font-size:12px; font-weight:bold; line-height:1;">{val}<br>{suit}</div>
+        <div style="text-align:center; line-height:80px; font-size:18px;">{suit}</div>
     </div>
     """
 
 # --- 3. 세션 상태 관리 ---
 if 'balance' not in st.session_state:
     st.session_state.update({
-        'balance': 2000000, 'bet': 10000, 'ins_bet': 0, 'deck': [], 'rc': 0, 'hand_count': 0,
-        'p_hands': [], 'd_hand': [], 'current_hand_idx': 0,
-        'game_status': 'betting', 'msg': "배팅 후 DEAL을 누르세요.", 'auto_mode': False
+        'balance': 2000000, 'bet': 10000, 'ins_bet': 0, 'deck': [], 'rc': 0, 
+        'hand_count': 0, 'wins': 0, 'losses': 0, 'draws': 0,
+        'p_hands': [], 'd_hand': [], 'current_hand_idx': 0, 'history': [],
+        'game_status': 'betting', 'msg': "Ready to Play", 'auto_mode': False
     })
 
 def reset_deck():
@@ -75,11 +77,32 @@ def draw_card():
 st.set_page_config(page_title="BK-Blackjack Pro", layout="wide")
 st.title("🃏 BK-블랙잭")
 
+# 전적 상단 표시
+total_games = st.session_state.hand_count
+win_rate = (st.session_state.wins / total_games * 100) if total_games > 0 else 0
+st.markdown(f"""
+### 📊 전적: {total_games}전 {st.session_state.wins}승 {st.session_state.draws}무 {st.session_state.losses}패 | 승률: {win_rate:.1f}%
+""", unsafe_allow_html=True)
+
 with st.sidebar:
-    st.header("📊 통계 센터")
-    st.metric("현재 자산", f"{st.session_state.balance:,}원")
-    st.write(f"🎮 게임 횟수: **{st.session_state.hand_count}**")
+    st.header("💰 자산")
+    st.metric("현재 잔액", f"{st.session_state.balance:,}원")
+    
+    if st.session_state.history:
+        st.write("🕒 최근 기록")
+        st.dataframe(pd.DataFrame(st.session_state.history).tail(8), hide_index=True)
+
+    st.divider()
     if st.button("🔄 덱 새로 섞기"): reset_deck(); st.rerun()
+    if st.button("💸 모든 데이터 초기화"): 
+        st.session_state.balance = 2000000
+        st.session_state.history = []
+        st.session_state.hand_count = 0
+        st.session_state.wins = 0
+        st.session_state.losses = 0
+        st.session_state.draws = 0
+        reset_deck()
+        st.rerun()
     st.divider()
     rem_decks = max(0.5, len(st.session_state.deck) / 52)
     st.metric("True Count", f"{st.session_state.rc / rem_decks:.2f}")
@@ -107,7 +130,7 @@ with col2:
     st.info(st.session_state.msg)
     
     if st.session_state.game_status == 'betting':
-        st.session_state.bet = st.slider("배팅액", 10000, 300000, 10000, step=10000)
+        st.session_state.bet = st.slider("배팅액", 10000, 300000, 10000, step=5000)
         if st.button("DEAL START", use_container_width=True) or (st.session_state.auto_mode):
             if st.session_state.balance >= st.session_state.bet:
                 st.session_state.balance -= st.session_state.bet
@@ -117,10 +140,9 @@ with col2:
                 st.session_state.current_hand_idx = 0
                 st.session_state.hand_count += 1
                 
-                # 딜러가 A가 아니고 플레이어가 블랙잭이면 즉시 승리
                 if is_blackjack(st.session_state.p_hands[0]) and st.session_state.d_hand[0][:-1] != 'A':
                     st.session_state.game_status = 'dealer_turn'
-                    st.session_state.msg = "Blackjack! 1.5배 즉시 지급"
+                    st.session_state.msg = "Blackjack! 1.5배 보너스"
                 else:
                     st.session_state.game_status = 'playing'
                     st.session_state.msg = "진행 중..."
@@ -131,26 +153,20 @@ with col2:
         action = get_basic_strategy(curr_h, st.session_state.d_hand[0])
         st.write(f"가이드: **{action}**")
         
-        # 인슈어런스 로직
         if st.session_state.d_hand[0][:-1] == 'A' and st.session_state.ins_bet == 0:
             if st.button(f"Insurance ({st.session_state.bet//2:,}원)"):
                 st.session_state.balance -= (st.session_state.bet // 2)
                 st.session_state.ins_bet = st.session_state.bet // 2
-                st.session_state.msg = "인슈어런스 적용됨. 게임을 계속하세요."
                 st.rerun()
 
         c1, c2, c3, c4 = st.columns(4)
-        if c1.button("Hit") or (st.session_state.auto_mode and action == "Hit (H)"):
-            curr_h.append(draw_card())
-            if get_score(curr_h) >= 21:
-                if st.session_state.current_hand_idx < len(st.session_state.p_hands)-1: st.session_state.current_hand_idx += 1
-                else: st.session_state.game_status = 'dealer_turn'
-            st.rerun()
-        if c2.button("Stand") or (st.session_state.auto_mode and action == "Stand (S)"):
+        if c1.button("Hit") or (st.session_state.auto_mode and "Hit" in action):
+            curr_h.append(draw_card()); st.rerun()
+        if c2.button("Stand") or (st.session_state.auto_mode and "Stand" in action):
             if st.session_state.current_hand_idx < len(st.session_state.p_hands)-1: st.session_state.current_hand_idx += 1
             else: st.session_state.game_status = 'dealer_turn'
             st.rerun()
-        if c3.button("Double") or (st.session_state.auto_mode and action == "Double (D)"):
+        if c3.button("Double") or (st.session_state.auto_mode and "Double" in action):
             st.session_state.balance -= st.session_state.bet
             st.session_state.bet *= 2
             curr_h.append(draw_card())
@@ -158,7 +174,7 @@ with col2:
             else: st.session_state.game_status = 'dealer_turn'
             st.rerun()
         can_split = len(curr_h) == 2 and curr_h[0][:-1] == curr_h[1][:-1] and len(st.session_state.p_hands) == 1
-        if c4.button("Split", disabled=not can_split) or (st.session_state.auto_mode and action == "Split (P)" and can_split):
+        if c4.button("Split", disabled=not can_split) or (st.session_state.auto_mode and "Split" in action and can_split):
             st.session_state.balance -= st.session_state.bet
             st.session_state.p_hands = [[curr_h[0], draw_card()], [curr_h[1], draw_card()]]
             st.rerun()
@@ -171,30 +187,34 @@ if st.session_state.game_status == 'dealer_turn':
 
 if st.session_state.game_status == 'result':
     d_s, d_bj = get_score(st.session_state.d_hand), is_blackjack(st.session_state.d_hand)
-    
-    # 인슈어런스 정산: 딜러 BJ이면 인슈어런스 배팅금의 3배(본전 회수+2배 수익) 지급
     if d_bj and st.session_state.ins_bet > 0:
         st.session_state.balance += st.session_state.ins_bet * 3
-        st.toast("Insurance 성공!")
-
-    res_msgs = []
-    original_bet = st.session_state.bet # 더블다운 시 변한 배팅액 고려
+    
+    results, total_payout = [], 0
+    final_win_flag, final_draw_flag = False, False # 전적 기록용
     
     for h in st.session_state.p_hands:
         p_s, p_bj = get_score(h), is_blackjack(h)
         if p_bj:
-            if d_bj: st.session_state.balance += original_bet; res_msgs.append("BJ Push")
-            else: st.session_state.balance += int(original_bet * 2.5); res_msgs.append("BJ Win(1.5x)")
-        elif p_s > 21: res_msgs.append("Bust")
-        elif d_s > 21 or p_s > d_s:
-            st.session_state.balance += original_bet * 2
-            res_msgs.append("Win")
-        elif p_s < d_s: res_msgs.append("Loss")
-        else: st.session_state.balance += original_bet; res_msgs.append("Push")
+            if d_bj: payout = st.session_state.bet; res = "BJ Push"; final_draw_flag = True
+            else: payout = int(st.session_state.bet * 2.5); res = "BJ Win"; final_win_flag = True
+        elif p_s > 21: payout = 0; res = "Bust"
+        elif d_s > 21 or p_s > d_s: payout = st.session_state.bet * 2; res = "Win"; final_win_flag = True
+        elif p_s < d_s: payout = 0; res = "Loss"
+        else: payout = st.session_state.bet; res = "Push"; final_draw_flag = True
+        total_payout += payout
+        results.append(res)
     
-    st.session_state.msg = " | ".join(res_msgs)
+    # 전적 업데이트 (한 판에 여러 핸드가 있어도 1회 게임으로 카운트)
+    if final_win_flag: st.session_state.wins += 1
+    elif final_draw_flag: st.session_state.draws += 1
+    else: st.session_state.losses += 1
+
+    st.session_state.balance += total_payout
+    st.session_state.history.append({"No": total_games, "Result": ", ".join(results), "Balance": f"{st.session_state.balance:,}"})
+    st.session_state.msg = " | ".join(results)
+    
     if st.button("NEXT GAME", use_container_width=True) or st.session_state.auto_mode:
-        time.sleep(1.5) if st.session_state.auto_mode else None
+        if st.session_state.auto_mode: time.sleep(1.0)
         st.session_state.game_status = 'betting'
-        st.session_state.bet = 10000 # 배팅 초기화
         st.rerun()
